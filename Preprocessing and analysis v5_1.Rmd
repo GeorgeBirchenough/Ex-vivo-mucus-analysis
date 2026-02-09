@@ -1,0 +1,118 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+### Analysis of ex vivo bead data
+
+### Input file requirement = "combined_data.txt" file; row1: sample name, row2: tissue z, rows3-n: bead z
+
+### Outputs = Combined_results (all pen/thickness data) and individual plots and data files for each sample if needed for quality control
+
+### Packages
+```{r}
+library(ggplot2)
+library(MESS)
+library(dplyr)
+library(ggpubr)
+library(tidyr)
+library(patchwork)
+```
+
+### Preprocessing
+```{r}
+#import data (must be numeric)
+Data = read.delim("combined_data.txt", sep = "\t", header = T)
+Data = data.frame(Data)
+#subtract tissue values from bead values
+Data_corrected = Data %>% mutate_if(is.numeric, funs(.-first(.)))
+Data_corrected = Data_corrected [-1,]
+#convert negative values to "0"
+Data_corrected = replace(Data_corrected, Data_corrected < 0, 0)
+#split dataframe
+Data_corrected_long= Data_corrected %>% pivot_longer(colnames(Data_corrected)) %>% as.data.frame()
+split_df= split(Data_corrected_long, Data_corrected_long$name)
+#remove NAs from list
+split_df= lapply(split_df, na.omit)
+#create data storage vectors and DFs
+Norm_pen=c()
+Thickness=c()
+```
+
+### Penetrability function
+```{r}
+Pen_func= function(df){
+
+#tryCatch makes the code fault tolerant so it can be used in sapply without killing it, returns an NA, see end of function  
+tryCatch({
+
+#generate polygon plot with peak normalized (ncount) y values and 0-500 range x values
+a=ggplot(data = df, aes(x=value))
+a+geom_freqpoly(aes(y=..ncount..),binwidth=5)+xlim(0,500) + labs(title = df[1,1])
+b=ggplot_build(a+geom_freqpoly(aes(y=..ncount..),binwidth=5)+xlim(0,500))
+line_data = data.frame(x= b[["data"]][[1]][["x"]], y=b[["data"]][[1]][["y"]])
+line_data = na.omit(line_data)
+#crop line data below mode
+line_mode = line_data$x[which.max(line_data$y)]
+line_data = line_data[line_data$x <= line_mode, ]
+#rescale x values between 0-100
+rescale_x <- function(x) {
+  min_x <- min(x)
+  max_x <- max(x)
+  rescaled <- 1 + ((x - min_x) * (100 - 1)) / (max_x - min_x)
+  return(rescaled)
+}
+line_data$x <- rescale_x(line_data$x)
+#calculate AUC
+AUC=auc(line_data$x, line_data$y)
+#generate and export bead distribution and penetrability curve graphs
+plot1=ggplot(data = df, aes(x=value)) +geom_freqpoly(aes(y=..ncount..),binwidth=5)+xlim(0,500) + labs(title = df[1,1])
+plot2=ggplot(line_data, aes(x,y)) + geom_line() + labs(title = df[1,1], x = "Norm_z", y = "Norm_freq")
+png(file=paste(df[1,1], ".png", sep = ""), width = 800, height = 800) 
+print(plot1 / plot2)
+dev.off()
+#export penetrability curve data
+colnames(line_data)[1] = "norm_z"
+colnames(line_data)[2] = "norm_freq"
+write.table(line_data, file = paste(df[1,1], "_pen_data.txt", sep = ""), sep = "\t")
+#append results to Norm_pen vector
+Norm_pen=append(Norm_pen,AUC)
+},
+
+error=function(e) {Norm_pen=append(Norm_pen, NA)})}
+
+```
+
+### Thickness function
+```{r}
+Thick_func= function(df){
+
+#tryCatch makes the code fault tolerant so it can be used in sapply without killing it, returns an NA, see end of function  
+tryCatch({
+
+#generate polygon plot with peak normalized (ncount) y values and 0-500 range x values
+a=ggplot(data = df, aes(x=value))
+a+geom_freqpoly(aes(y=..ncount..),binwidth=5)+xlim(0,500)
+b=ggplot_build(a+geom_freqpoly(aes(y=..ncount..),binwidth=5)+xlim(0,500))
+#extract line data
+line_data = data.frame(x= b[["data"]][[1]][["x"]], y=b[["data"]][[1]][["y"]])
+line_data = na.omit(line_data)
+#calulate mucus surface (line mode)
+line_mode = line_data$x[which.max(line_data$y)]
+
+#append results to Thickness vector
+Thickness=append(Thickness,line_mode)
+},
+
+error=function(e) {Thickness=append(Thickness, NA)})}
+
+```
+
+### Apply functions to whole dataset and export
+```{r}
+Norm_pen=sapply(split_df, Pen_func)
+Thickness=sapply(split_df, Thick_func)
+Combined.results= data.frame(Norm_pen, Thickness, row.names = names(split_df))
+write.table(Combined.results, file = "combined_results.txt", sep = "\t")
+```
+
