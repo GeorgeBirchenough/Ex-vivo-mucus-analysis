@@ -16,8 +16,8 @@ User Knowledge: Prior knowledge of R is useful but not essential.
 
 You will need to download and install the following:
 
-R for Windows 
-Rtools 
+R for Windows, 
+Rtools, 
 R Studio 
 
 ### Required R Packages
